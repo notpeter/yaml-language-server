@@ -3,7 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import { configure as configureHttpRequests, xhr } from 'request-light';
-import { Connection, DidChangeConfigurationNotification, DocumentFormattingRequest } from 'vscode-languageserver';
+import {
+  Connection,
+  DidChangeConfigurationNotification,
+  DidChangeConfigurationParams,
+  DocumentFormattingRequest,
+} from 'vscode-languageserver';
 import { convertErrorToTelemetryMsg } from '../../languageservice/utils/objects';
 import { isRelativePath, relativeToAbsolutePath } from '../../languageservice/utils/paths';
 import { checkSchemaURI, JSON_SCHEMASTORE_URL, KUBERNETES_SCHEMA_URL } from '../../languageservice/utils/schemaUrls';
@@ -31,7 +36,30 @@ export class SettingsHandler {
         this.telemetry.sendError('yaml.settings.error', { error: convertErrorToTelemetryMsg(err) });
       }
     }
-    this.connection.onDidChangeConfiguration(() => this.pullConfiguration());
+
+    // Pull a full configuration using `workspace/configuration` if client is capable.
+    // Otherwise event.settings is the only way to get configuration, so process that.
+    this.connection.onDidChangeConfiguration(
+      this.yamlSettings.capabilities.workspace.configuration
+        ? () => this.pullConfiguration()
+        : (event) => this.handleSettings(event)
+    );
+  }
+
+  private async handleSettings(event: DidChangeConfigurationParams): Promise<void> {
+    if (event && Object.prototype.hasOwnProperty.call(event, 'settings')) {
+      const settings: Readonly<Settings> = {
+        yaml: event.settings.yaml,
+        http: {
+          proxy: event.settings.http?.proxy ?? '',
+          proxyStrictSSL: event.settings.http?.proxyStrictSSL ?? false,
+        },
+        yamlEditor: event.settings['[yaml]'],
+        vscodeEditor: event.settings.editor ?? {},
+        files: event.settings.files,
+      };
+      await this.setConfiguration(settings);
+    }
   }
 
   /**
